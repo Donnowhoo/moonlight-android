@@ -1,0 +1,123 @@
+name: Moonlight Touch Android
+
+on:
+  push:
+    branches: [touch]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: moonlight-touch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository == 'Donnowhoo/moonlight-android' && github.ref == 'refs/heads/touch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out exact source and nested submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Require user-provided signing material
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$DEBUG_KEYSTORE_BASE64" ]]; then
+            printf '%s\n' 'DEBUG_KEYSTORE_BASE64 is required; refusing an ephemeral signing key.' >&2
+            exit 1
+          fi
+
+      - name: Set up JDK
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Android tools on the GitHub runner only
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-37 build-tools;37.0.0 ndk;29.0.14206865'
+          log-accepted-android-sdk-licenses: false
+
+      - name: Restore fixed debug signing key without printing it
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          target = Path.home() / '.android' / 'debug.keystore'
+          target.parent.mkdir(parents=True, exist_ok=True)
+          try:
+              data = base64.b64decode(''.join(os.environ['DEBUG_KEYSTORE_BASE64'].split()), validate=True)
+              if not data:
+                  raise ValueError()
+              target.write_bytes(data)
+              target.chmod(0o600)
+          except Exception:
+              raise SystemExit('Signing material could not be restored; contents are not logged.')
+          PY
+          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey >/dev/null 2>&1 || {
+            printf '%s\n' 'Invalid debug signing store or alias.' >&2
+            exit 1
+          }
+
+      - name: Test, lint, and assemble nonRootDebug
+        run: |
+          bash ./gradlew --no-daemon --console=plain \
+            -PtouchCommit="${GITHUB_SHA:0:8}" -PtouchBuildNumber="$GITHUB_RUN_NUMBER" \
+            testNonRootDebugUnitTest lintNonRootDebug assembleNonRootDebug
+
+      - name: Verify tests, APK identity, signature, and ARM64 library
+        run: |
+          apk=app/build/outputs/apk/nonRoot/debug/app-nonRoot-debug.apk
+          test -f "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > apk-badging.txt
+          python3 .github/scripts/verify_touch_build.py "$apk" apk-badging.txt
+
+      - name: Publish source-linked prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk="Moonlight-Touch-${GITHUB_SHA:0:8}.apk"
+          cp app/build/outputs/apk/nonRoot/debug/app-nonRoot-debug.apk "$apk"
+          sha256sum "$apk" > "$apk.sha256"
+          python3 - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+          sha = os.environ['GITHUB_SHA']
+          submodules = subprocess.check_output(['git', 'submodule', 'status', '--recursive'], text=True)
+          notes = (f'Moonlight Touch personal test build, based on official Moonlight Android b48494c.\n\n'
+                   f'Source: https://github.com/Donnowhoo/moonlight-android/commit/{sha}\n\n'
+                   f'Full source commit: `{sha}`\n\n'
+                   'Application ID: `com.donnowhoo.moonlight.touch.debug`\n\n'
+                   'Stage 1: build identity only; touch and keyboard behavior are unchanged.\n'
+                   'Install and pair separately from the official app. GPL-3.0; see LICENSE.txt.\n\n'
+                   'Build instructions: TOUCH-ANDROID.md at the source commit above.\n\n'
+                   f'Submodules:\n```text\n{submodules}```\n')
+          Path('touch-release-notes.md').write_text(notes, encoding='utf-8')
+          PY
+          if gh release view touch-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit touch-latest --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "Moonlight Touch ${GITHUB_SHA:0:8}" --notes-file touch-release-notes.md
+          else
+            gh release create touch-latest --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --title "Moonlight Touch ${GITHUB_SHA:0:8}" --notes-file touch-release-notes.md
+          fi
+          gh release upload touch-latest "$apk" "$apk.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Remove signing material from the disposable runner
+        if: always()
+        run: rm -f -- "$HOME/.android/debug.keystore"

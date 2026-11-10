@@ -1,5 +1,22 @@
 # Moonlight Android
 
+## Moonlight 터치 (unofficial personal fork)
+
+This public fork modifies official `moonlight-stream/moonlight-android` commit
+`b48494cb96bff23d8886c4775cc4f39a1075495d`. Modified on 2026-11-10 by Donnowhoo.
+The `touch` branch is for Android touch/keyboard usability work. Stage 1 changes
+only build identity, CI, and tests; streaming and input code are unchanged.
+It is not the official Moonlight application. Existing copyright notices and
+`LICENSE.txt` are retained. No code from other unofficial forks has been copied.
+
+The test APK is named **Moonlight 터치** and uses
+`com.donnowhoo.moonlight.touch.debug`, so it installs beside the official app.
+It requires separate pairing. See [TOUCH-ANDROID.md](TOUCH-ANDROID.md) for build,
+signing responsibilities, verification, and source correspondence.
+The upstream download links and build instructions below describe the official
+project, not this fork's test APK. Do not install Android build tools on the live
+Sunshine host for this project; our build runs only on GitHub-hosted runners.
+
 [![AppVeyor Build Status](https://ci.appveyor.com/api/projects/status/232a8tadrrn8jv0k/branch/master?svg=true)](https://ci.appveyor.com/project/cgutman/moonlight-android/branch/master)
 [![Translation Status](https://hosted.weblate.org/widgets/moonlight/-/moonlight-android/svg-badge.svg)](https://hosted.weblate.org/projects/moonlight/moonlight-android/)
 

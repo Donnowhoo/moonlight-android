@@ -42,3 +42,8 @@ app/.externalNativeBuild/
 
 # NDK stuff
 .cxx/
+
+# Signing material must never enter source control.
+*.keystore
+*.jks
+debug-key-base64.txt
