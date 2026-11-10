@@ -7,6 +7,9 @@ import com.limelight.binding.input.ControllerHandler;
 import com.limelight.binding.input.KeyboardTranslator;
 import com.limelight.binding.input.capture.InputCaptureManager;
 import com.limelight.binding.input.capture.InputCaptureProvider;
+import com.limelight.binding.input.ShortcutController;
+import com.limelight.binding.input.FingerGestureController;
+import com.limelight.ui.ShortcutBar;
 import com.limelight.binding.input.touch.AbsoluteTouchContext;
 import com.limelight.binding.input.touch.RelativeTouchContext;
 import com.limelight.binding.input.driver.UsbDriverService;
@@ -133,6 +136,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private InputCaptureProvider inputCaptureProvider;
     private int modifierFlags = 0;
     private boolean grabbedInput = true;
+    private ShortcutController shortcuts;
+    private ShortcutBar shortcutBar;
+    private FingerGestureController fingerGestures;
+    private boolean shortcutFocused = true;
     private boolean cursorVisible = false;
     private boolean waitingForAllModifiersUp = false;
     private int specialKeyCode = KeyEvent.KEYCODE_UNKNOWN;
@@ -492,6 +499,20 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         InputManager inputManager = (InputManager) getSystemService(Context.INPUT_SERVICE);
         inputManager.registerInputDeviceListener(keyboardTranslator, null);
 
+        if (prefConfig.shortcutBar || prefConfig.touchGestures) {
+            shortcuts = new ShortcutController(conn, new ShortcutController.Host() {
+                public boolean canSend() { return connected && grabbedInput && shortcutFocused && !isHidingOverlays; }
+                public void changed() { if (shortcutBar != null) shortcutBar.refresh(); }
+                public void progress(int sent, int total) {
+                    if (shortcutBar != null) shortcutBar.progress(sent, total);
+                }
+                public void cancelTouchInput() {
+                    if (fingerGestures != null) fingerGestures.cancel();
+                    for (TouchContext context : touchContextMap) if (context != null) context.cancelForGestureTransfer();
+                }
+            });
+        }
+
         // Initialize touch contexts
         for (int i = 0; i < touchContextMap.length; i++) {
             if (!prefConfig.touchscreenTrackpad) {
@@ -502,6 +523,18 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         REFERENCE_HORIZ_RES, REFERENCE_VERT_RES,
                         streamView, prefConfig);
             }
+            if (shortcuts != null) touchContextMap[i].setShortcutController(shortcuts);
+        }
+        if (prefConfig.touchGestures) {
+            fingerGestures = new FingerGestureController(conn, shortcuts, streamView, touchContextMap, prefConfig,
+                    new FingerGestureController.Host() {
+                        public boolean canSend() { return connected && grabbedInput && shortcutFocused && !isHidingOverlays; }
+                        public void keyboard() { toggleKeyboard(); }
+                    });
+        }
+        if (prefConfig.shortcutBar) {
+            shortcutBar = new ShortcutBar(this, (FrameLayout)streamView.getParent(), shortcuts,
+                    prefConfig, this::toggleKeyboard);
         }
 
         if (prefConfig.onscreenController) {
@@ -589,6 +622,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Hide on-screen overlays in PiP mode
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (isInPictureInPictureMode()) {
+                releaseShortcutInput();
+                if (shortcutBar != null) shortcutBar.hideForLifecycle();
                 isHidingOverlays = true;
 
                 if (virtualController != null) {
@@ -606,6 +641,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
             else {
                 isHidingOverlays = false;
+                if (shortcutBar != null) shortcutBar.setVisibility(View.VISIBLE);
 
                 // Restore overlays to previous state when leaving PiP
 
@@ -740,7 +776,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
+        if (!hasFocus) releaseShortcutInput();
+        shortcutFocused = hasFocus;
         super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && shortcutBar != null && !isHidingOverlays) shortcutBar.focusRestored();
 
         // We can't guarantee the state of modifiers keys which may have
         // lifted while focus was not on us. Clear the modifier state.
@@ -1034,6 +1073,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     protected void onDestroy() {
+        releaseShortcutInput();
+        if (shortcutBar != null) shortcutBar.dispose();
         super.onDestroy();
 
         if (controllerHandler != null) {
@@ -1077,6 +1118,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     protected void onStop() {
+        releaseShortcutInput();
+        if (shortcutBar != null) shortcutBar.hideForLifecycle();
         super.onStop();
 
         SpinnerDialog.closeDialogs(this);
@@ -1147,7 +1190,31 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         finish();
     }
 
+    private void sendShortcutAwareMouseButton(boolean down, byte button) {
+        if (shortcuts != null && android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            runOnUiThread(() -> sendShortcutAwareMouseButton(down, button));
+            return;
+        }
+        if (shortcuts != null) shortcuts.userInput();
+        if (shortcuts != null) shortcuts.mouse("physical:mouse", button, down, !down);
+        else if (down) conn.sendMouseButtonDown(button);
+        else conn.sendMouseButtonUp(button);
+    }
+
+    private void releaseShortcutInput() {
+        if (shortcuts == null) return;
+        if (fingerGestures != null) fingerGestures.cancel();
+        for (TouchContext context : touchContextMap) if (context != null) context.cancelTouch();
+        shortcuts.releaseForFocusLoss();
+    }
+
+    @Override
+    public void onStreamPointerCaptureChanged(boolean captured) {
+        if (!captured) releaseShortcutInput();
+    }
+
     private void setInputGrabState(boolean grab) {
+        if (!grab) releaseShortcutInput();
         // Grab/ungrab the mouse cursor
         if (grab) {
             inputCaptureProvider.enableCapture();
@@ -1326,6 +1393,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean handleKeyDown(KeyEvent event) {
+        if (shortcuts != null) {
+            shortcuts.userInput();
+            if (!grabbedInput || !shortcutFocused || !connected || isHidingOverlays) return false;
+        }
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
@@ -1343,7 +1414,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // are disabled. If they are enabled, handleMotionEvent() will take
             // care of this.
             if (!prefConfig.mouseNavButtons) {
-                conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
+                sendShortcutAwareMouseButton(true, MouseButtonPacket.BUTTON_RIGHT);
             }
 
             // Always return true, otherwise the back press will be propagated
@@ -1383,6 +1454,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 int unicodeChar = event.getUnicodeChar();
                 if ((unicodeChar & KeyCharacterMap.COMBINING_ACCENT) == 0 && (unicodeChar & KeyCharacterMap.COMBINING_ACCENT_MASK) != 0) {
                     conn.sendUtf8Text(""+(char)unicodeChar);
+                    if (shortcuts != null) shortcuts.complete();
                     return true;
                 }
 
@@ -1394,8 +1466,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 return true;
             }
 
-            conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, getModifierState(event),
-                    keyboardTranslator.hasNormalizedMapping(event.getKeyCode(), event.getDeviceId()) ? 0 : MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+            if (shortcuts != null) {
+                shortcuts.physical(Integer.toString(event.getDeviceId()), translated, true,
+                        getModifierState(event), (byte)(keyboardTranslator.hasNormalizedMapping(event.getKeyCode(), event.getDeviceId())
+                                ? 0 : MoonBridge.SS_KBE_FLAG_NON_NORMALIZED));
+            } else {
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, getModifierState(event),
+                        keyboardTranslator.hasNormalizedMapping(event.getKeyCode(), event.getDeviceId()) ? 0 : MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+            }
         }
 
         return true;
@@ -1408,6 +1486,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean handleKeyUp(KeyEvent event) {
+        if (shortcuts != null) {
+            shortcuts.userInput();
+            if (!grabbedInput || !shortcutFocused || !connected || isHidingOverlays) return false;
+        }
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
@@ -1424,7 +1506,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // are disabled. If they are enabled, handleMotionEvent() will take
             // care of this.
             if (!prefConfig.mouseNavButtons) {
-                conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
+                sendShortcutAwareMouseButton(false, MouseButtonPacket.BUTTON_RIGHT);
             }
 
             // Always return true, otherwise the back press will be propagated
@@ -1458,8 +1540,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 return (unicodeChar & KeyCharacterMap.COMBINING_ACCENT) == 0 && (unicodeChar & KeyCharacterMap.COMBINING_ACCENT_MASK) != 0;
             }
 
-            conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, getModifierState(event),
-                    keyboardTranslator.hasNormalizedMapping(event.getKeyCode(), event.getDeviceId()) ? 0 : MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+            if (shortcuts != null) {
+                shortcuts.physical(Integer.toString(event.getDeviceId()), translated, false,
+                        getModifierState(event), (byte)(keyboardTranslator.hasNormalizedMapping(event.getKeyCode(), event.getDeviceId())
+                                ? 0 : MoonBridge.SS_KBE_FLAG_NON_NORMALIZED));
+            } else {
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, getModifierState(event),
+                        keyboardTranslator.hasNormalizedMapping(event.getKeyCode(), event.getDeviceId()) ? 0 : MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+            }
         }
 
         return true;
@@ -1471,6 +1559,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private boolean handleKeyMultiple(KeyEvent event) {
+        if (shortcuts != null) {
+            shortcuts.userInput();
+            if (!grabbedInput || !shortcutFocused || !connected || isHidingOverlays) return false;
+        }
         // We can receive keys from a software keyboard that don't correspond to any existing
         // KEYCODE value. Android will give those to us as an ACTION_MULTIPLE KeyEvent.
         //
@@ -1484,6 +1576,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         conn.sendUtf8Text(event.getCharacters());
+        if (shortcuts != null) shortcuts.complete();
         return true;
     }
 
@@ -1788,6 +1881,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             return false;
         }
 
+        if (shortcuts != null) {
+            if (!shortcutFocused || !connected || isHidingOverlays) return false;
+            shortcuts.userInput();
+            if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) releaseShortcutInput();
+        }
         int eventSource = event.getSource();
         int deviceSources = event.getDevice() != null ? event.getDevice().getSources() : 0;
         if ((eventSource & InputDevice.SOURCE_CLASS_JOYSTICK) != 0) {
@@ -1812,6 +1910,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                                     event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER)) ||
                     eventSource == 12290) // 12290 = Samsung DeX mode desktop mouse
             {
+                if (fingerGestures != null && event.getPointerCount() > 0 &&
+                        (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS ||
+                         event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER)) fingerGestures.cancel();
                 int buttonState = event.getButtonState();
                 int changedButtons = buttonState ^ lastButtonState;
 
@@ -1887,7 +1988,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     }
                 }
                 else if (view != null && trySendPenEvent(view, event)) {
-                    // If our host supports pen events, send it directly
+                    // Preserve native pen packets; consume a one-shot modifier only after pen Up.
+                    if (shortcuts != null) {
+                        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) shortcuts.nativePen(true);
+                        else if (event.getActionMasked() == MotionEvent.ACTION_UP ||
+                                event.getActionMasked() == MotionEvent.ACTION_CANCEL) shortcuts.nativePen(false);
+                    }
                     return true;
                 }
                 else if (view != null) {
@@ -1903,49 +2009,49 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 if ((changedButtons & MotionEvent.BUTTON_PRIMARY) != 0) {
                     if ((buttonState & MotionEvent.BUTTON_PRIMARY) != 0) {
-                        conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
+                        sendShortcutAwareMouseButton(true, MouseButtonPacket.BUTTON_LEFT);
                     }
                     else {
-                        conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+                        sendShortcutAwareMouseButton(false, MouseButtonPacket.BUTTON_LEFT);
                     }
                 }
 
                 // Mouse secondary or stylus primary is right click (stylus down is left click)
                 if ((changedButtons & (MotionEvent.BUTTON_SECONDARY | MotionEvent.BUTTON_STYLUS_PRIMARY)) != 0) {
                     if ((buttonState & (MotionEvent.BUTTON_SECONDARY | MotionEvent.BUTTON_STYLUS_PRIMARY)) != 0) {
-                        conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
+                        sendShortcutAwareMouseButton(true, MouseButtonPacket.BUTTON_RIGHT);
                     }
                     else {
-                        conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
+                        sendShortcutAwareMouseButton(false, MouseButtonPacket.BUTTON_RIGHT);
                     }
                 }
 
                 // Mouse tertiary or stylus secondary is middle click
                 if ((changedButtons & (MotionEvent.BUTTON_TERTIARY | MotionEvent.BUTTON_STYLUS_SECONDARY)) != 0) {
                     if ((buttonState & (MotionEvent.BUTTON_TERTIARY | MotionEvent.BUTTON_STYLUS_SECONDARY)) != 0) {
-                        conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
+                        sendShortcutAwareMouseButton(true, MouseButtonPacket.BUTTON_MIDDLE);
                     }
                     else {
-                        conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_MIDDLE);
+                        sendShortcutAwareMouseButton(false, MouseButtonPacket.BUTTON_MIDDLE);
                     }
                 }
 
                 if (prefConfig.mouseNavButtons) {
                     if ((changedButtons & MotionEvent.BUTTON_BACK) != 0) {
                         if ((buttonState & MotionEvent.BUTTON_BACK) != 0) {
-                            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_X1);
+                            sendShortcutAwareMouseButton(true, MouseButtonPacket.BUTTON_X1);
                         }
                         else {
-                            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_X1);
+                            sendShortcutAwareMouseButton(false, MouseButtonPacket.BUTTON_X1);
                         }
                     }
 
                     if ((changedButtons & MotionEvent.BUTTON_FORWARD) != 0) {
                         if ((buttonState & MotionEvent.BUTTON_FORWARD) != 0) {
-                            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_X2);
+                            sendShortcutAwareMouseButton(true, MouseButtonPacket.BUTTON_X2);
                         }
                         else {
-                            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_X2);
+                            sendShortcutAwareMouseButton(false, MouseButtonPacket.BUTTON_X2);
                         }
                     }
                 }
@@ -1959,14 +2065,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             lastAbsTouchDownY = event.getY(0);
 
                             // Stylus is left click
-                            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
+                            sendShortcutAwareMouseButton(true, MouseButtonPacket.BUTTON_LEFT);
                         } else if (event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER) {
                             lastAbsTouchDownTime = event.getEventTime();
                             lastAbsTouchDownX = event.getX(0);
                             lastAbsTouchDownY = event.getY(0);
 
                             // Eraser is right click
-                            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
+                            sendShortcutAwareMouseButton(true, MouseButtonPacket.BUTTON_RIGHT);
                         }
                     }
                     else if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
@@ -1976,14 +2082,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             lastAbsTouchUpY = event.getY(0);
 
                             // Stylus is left click
-                            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+                            sendShortcutAwareMouseButton(false, MouseButtonPacket.BUTTON_LEFT);
                         } else if (event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER) {
                             lastAbsTouchUpTime = event.getEventTime();
                             lastAbsTouchUpX = event.getX(0);
                             lastAbsTouchUpY = event.getY(0);
 
                             // Eraser is right click
-                            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
+                            sendShortcutAwareMouseButton(false, MouseButtonPacket.BUTTON_RIGHT);
                         }
                     }
                 }
@@ -2010,6 +2116,15 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 else {
                     xOffset = 0.f;
                     yOffset = 0.f;
+                }
+
+                if (fingerGestures != null) {
+                    boolean onlyFingers = true;
+                    for (int pointer = 0; pointer < event.getPointerCount(); pointer++) {
+                        if (event.getToolType(pointer) != MotionEvent.TOOL_TYPE_FINGER) onlyFingers = false;
+                    }
+                    if (onlyFingers) return fingerGestures.handle(event, xOffset, yOffset);
+                    fingerGestures.cancel();
                 }
 
                 int actionIndex = event.getActionIndex();
@@ -2226,6 +2341,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private void stopConnection() {
+        releaseShortcutInput();
         if (connecting || connected) {
             connecting = connected = false;
             updatePipAutoEnter();
@@ -2609,10 +2725,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         if (down) {
-            conn.sendMouseButtonDown(buttonIndex);
+            sendShortcutAwareMouseButton(true, buttonIndex);
         }
         else {
-            conn.sendMouseButtonUp(buttonIndex);
+            sendShortcutAwareMouseButton(false, buttonIndex);
         }
     }
 
@@ -2628,6 +2744,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public void keyboardEvent(boolean buttonDown, short keyCode) {
+        if (shortcuts != null && android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            runOnUiThread(() -> keyboardEvent(buttonDown, keyCode));
+            return;
+        }
+        if (shortcuts != null) {
+            shortcuts.userInput();
+            if (!grabbedInput || !shortcutFocused || !connected || isHidingOverlays) return;
+        }
         short keyMap = keyboardTranslator.translate(keyCode, -1);
         if (keyMap != 0) {
             // handleSpecialKeys() takes the Android keycode
@@ -2635,7 +2759,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 return;
             }
 
-            if (buttonDown) {
+            if (shortcuts != null) {
+                shortcuts.physical("evdev", keyMap, buttonDown, getModifierState(keyCode), (byte)0);
+            }
+            else if (buttonDown) {
                 conn.sendKeyboardInput(keyMap, KeyboardPacket.KEY_DOWN, getModifierState(keyCode), (byte)0);
             }
             else {

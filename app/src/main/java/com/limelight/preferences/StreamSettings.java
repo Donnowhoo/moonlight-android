@@ -275,6 +275,12 @@ public class StreamSettings extends Activity {
             super.onCreate(savedInstanceState);
 
             addPreferencesFromResource(R.xml.preferences);
+            findPreference("shortcut_help").setOnPreferenceClickListener(preference -> {
+                new android.app.AlertDialog.Builder(getActivity()).setTitle(R.string.shortcut_help_title)
+                        .setMessage(getString(R.string.shortcut_help) + "\n\n" + getString(R.string.touch_work_gestures_summary))
+                        .setPositiveButton(android.R.string.ok, null).show();
+                return true;
+            });
             PreferenceScreen screen = getPreferenceScreen();
 
             // hide on-screen controls category on non touch screen devices

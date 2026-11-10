@@ -103,7 +103,9 @@ jobs:
                    f'Source: https://github.com/Donnowhoo/moonlight-android/commit/{sha}\n\n'
                    f'Full source commit: `{sha}`\n\n'
                    'Application ID: `com.donnowhoo.moonlight.touch.debug`\n\n'
-                   'Stage 1: build identity only; touch and keyboard behavior are unchanged.\n'
+                   'F3 shortcut bar plus optional touch-only work gestures (direct touch and trackpad).\n'
+                   'Korean realtime IME composition (F4) and F1/F2 drag-lock/acceleration are not included.\n'
+                   'Turn off Touch enhancements for original input behavior; gesture and bar switches are independent.\n'
                    'Install and pair separately from the official app. GPL-3.0; see LICENSE.txt.\n\n'
                    'Build instructions: TOUCH-ANDROID.md at the source commit above.\n\n'
                    f'Submodules:\n```text\n{submodules}```\n')

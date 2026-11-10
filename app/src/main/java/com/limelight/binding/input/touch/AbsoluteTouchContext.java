@@ -1,5 +1,8 @@
 package com.limelight.binding.input.touch;
 
+import com.limelight.binding.input.ShortcutController;
+import com.limelight.binding.input.TouchMouseState;
+
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
@@ -29,9 +32,10 @@ public class AbsoluteTouchContext implements TouchContext {
             // Switch from a left click to a right click after a long press
             confirmedLongPress = true;
             if (confirmedTap) {
-                conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+                if (shortcutMouse != null) shortcutMouse.up(MouseButtonPacket.BUTTON_LEFT, false);
+                else mouseUp(MouseButtonPacket.BUTTON_LEFT);
             }
-            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
+            mouseDown(MouseButtonPacket.BUTTON_RIGHT);
         }
     };
 
@@ -43,6 +47,26 @@ public class AbsoluteTouchContext implements TouchContext {
         }
     };
 
+    private ShortcutController shortcuts;
+    private TouchMouseState shortcutMouse;
+
+    @Override
+    public void setShortcutController(ShortcutController controller) {
+        shortcuts = controller;
+        shortcutMouse = new TouchMouseState((button, down, completes) ->
+                controller.mouse("touch" + actionIndex, button, down, completes));
+    }
+
+    private void mouseDown(byte button) {
+        if (shortcutMouse != null) shortcutMouse.down(button);
+        else conn.sendMouseButtonDown(button);
+    }
+
+    private void mouseUp(byte button) {
+        if (shortcutMouse != null) shortcutMouse.up(button, true);
+        else conn.sendMouseButtonUp(button);
+    }
+
     private final NvConnection conn;
     private final int actionIndex;
     private final View targetView;
@@ -51,7 +75,7 @@ public class AbsoluteTouchContext implements TouchContext {
     private final Runnable leftButtonUpRunnable = new Runnable() {
         @Override
         public void run() {
-            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+            mouseUp(MouseButtonPacket.BUTTON_LEFT);
         }
     };
 
@@ -131,10 +155,10 @@ public class AbsoluteTouchContext implements TouchContext {
 
             // Raise the mouse buttons that we currently have down
             if (confirmedLongPress) {
-                conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
+                mouseUp(MouseButtonPacket.BUTTON_RIGHT);
             }
             else if (confirmedTap) {
-                conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+                mouseUp(MouseButtonPacket.BUTTON_LEFT);
             }
             else {
                 // If we get here, this means that the tap completed within the touch down
@@ -145,7 +169,9 @@ public class AbsoluteTouchContext implements TouchContext {
                 // Release the left mouse button in 100ms to allow for apps that use polling
                 // to detect mouse button presses.
                 handler.removeCallbacks(leftButtonUpRunnable);
-                handler.postDelayed(leftButtonUpRunnable, 100);
+                if (shortcutMouse != null) {
+                    handler.postDelayed(shortcutMouse.delayedUp(MouseButtonPacket.BUTTON_LEFT), 100);
+                } else handler.postDelayed(leftButtonUpRunnable, 100);
             }
         }
 
@@ -186,7 +212,7 @@ public class AbsoluteTouchContext implements TouchContext {
             // Don't reposition for finger down events within the deadzone. This makes double-clicking easier.
             updatePosition(lastTouchDownX, lastTouchDownY);
         }
-        conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
+        mouseDown(MouseButtonPacket.BUTTON_LEFT);
     }
 
     @Override
@@ -220,18 +246,30 @@ public class AbsoluteTouchContext implements TouchContext {
 
     @Override
     public void cancelTouch() {
+        cancelForGestureTransfer();
+        if (shortcuts != null) shortcuts.releaseAll();
+    }
+
+    @Override
+    public void cancelForGestureTransfer() {
         cancelled = true;
 
         // Cancel the timers
         cancelLongPressTimer();
         cancelTapDownTimer();
 
+        if (shortcutMouse != null) {
+            handler.removeCallbacksAndMessages(null);
+            shortcutMouse.cancel();
+            return;
+        }
+
         // Raise the mouse buttons
         if (confirmedLongPress) {
-            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
+            mouseUp(MouseButtonPacket.BUTTON_RIGHT);
         }
         else if (confirmedTap) {
-            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+            mouseUp(MouseButtonPacket.BUTTON_LEFT);
         }
     }
 

@@ -26,7 +26,19 @@ def main():
     reports = list(Path("app/build/test-results/testNonRootDebugUnitTest").glob("TEST-*.xml"))
     if not reports:
         raise SystemExit("Unit test XML reports are missing")
-    required = {"touchDebugDoesNotReplaceOfficialApp", "touchVersionIdentifiesSource"}
+    required = {
+        ("com.limelight.TouchBuildIdentityTest", "touchDebugDoesNotReplaceOfficialApp"),
+        ("com.limelight.TouchBuildIdentityTest", "touchVersionIdentifiesSource"),
+    }
+    # Require every declared F3/gesture test, not just the presence of a green report.
+    suites = ("ShortcutInputTest", "ClipboardTextTest", "ClipboardTyperTest",
+              "TouchMouseStateTest", "FingerGesturePolicyTest")
+    for suite in suites:
+        source = Path("app/src/test/java/com/limelight/binding/input") / f"{suite}.java"
+        names = re.findall(r"@Test\s+public\s+void\s+(\w+)\s*\(", source.read_text(encoding="utf-8"))
+        if not names:
+            raise SystemExit(f"Required test suite has no test methods: {suite}")
+        required.update((f"com.limelight.binding.input.{suite}", name) for name in names)
     passed = 0
     for report in reports:
         for case in ET.parse(report).getroot().iter("testcase"):
@@ -35,10 +47,9 @@ def main():
             name = case.get("name", "")
             print(f"PASS {case.get('classname')}.{name}")
             passed += 1
-            if case.get("classname") == "com.limelight.TouchBuildIdentityTest":
-                required.discard(name)
+            required.discard((case.get("classname"), name))
     if required:
-        raise SystemExit("Build identity tests did not execute")
+        raise SystemExit(f"Required tests did not execute: {sorted(required)}")
     print(f"Verified {passed} tests and APK {fields['name']} {fields['versionName']}")
 
 

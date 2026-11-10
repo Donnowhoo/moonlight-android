@@ -78,7 +78,15 @@ public class StreamView extends SurfaceView {
         return super.onKeyPreIme(keyCode, event);
     }
 
+    @Override
+    @TargetApi(26)
+    public void onPointerCaptureChange(boolean hasCapture) {
+        super.onPointerCaptureChange(hasCapture);
+        if (inputCallbacks != null) inputCallbacks.onStreamPointerCaptureChanged(hasCapture);
+    }
+
     public interface InputCallbacks {
+        default void onStreamPointerCaptureChanged(boolean captured) { }
         boolean handleKeyUp(KeyEvent event);
         boolean handleKeyDown(KeyEvent event);
     }

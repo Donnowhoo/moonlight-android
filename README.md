@@ -4,8 +4,9 @@
 
 This public fork modifies official `moonlight-stream/moonlight-android` commit
 `b48494cb96bff23d8886c4775cc4f39a1075495d`. Modified on 2026-11-10 by Donnowhoo.
-The `touch` branch is for Android touch/keyboard usability work. Stage 1 changes
-only build identity, CI, and tests; streaming and input code are unchanged.
+The `touch` branch adds an F3 touch shortcut bar and optional touch-only work gestures.
+Korean realtime IME composition (F4) and F1/F2 drag-lock/acceleration are deferred.
+See [F3-LOCAL-REVIEW.md](F3-LOCAL-REVIEW.md) for behavior, settings, thresholds and verification limits.
 It is not the official Moonlight application. Existing copyright notices and
 `LICENSE.txt` are retained. No code from other unofficial forks has been copied.
 

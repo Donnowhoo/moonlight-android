@@ -146,6 +146,10 @@ public class PreferenceConfiguration {
     public boolean vibrateFallbackToDevice;
     public int vibrateFallbackToDeviceStrength;
     public boolean touchscreenTrackpad;
+    public boolean shortcutBar;
+    public boolean touchGestures;
+    public int shortcutBarOpacity;
+    public java.util.Set<String> shortcutGroups;
     public MoonBridge.AudioConfiguration audioConfiguration;
     public int framePacing;
     public boolean absoluteMouseMode;
@@ -593,6 +597,13 @@ public class PreferenceConfiguration {
         config.vibrateFallbackToDeviceStrength = prefs.getInt(VIBRATE_FALLBACK_STRENGTH_PREF_STRING, DEFAULT_VIBRATE_FALLBACK_STRENGTH);
         config.flipFaceButtons = prefs.getBoolean(FLIP_FACE_BUTTONS_PREF_STRING, DEFAULT_FLIP_FACE_BUTTONS);
         config.touchscreenTrackpad = prefs.getBoolean(TOUCHSCREEN_TRACKPAD_PREF_STRING, DEFAULT_TOUCHSCREEN_TRACKPAD);
+        config.touchGestures = prefs.getBoolean("checkbox_touch_enhancements", true) &&
+                prefs.getBoolean("checkbox_touch_work_gestures", true);
+        config.shortcutBar = prefs.getBoolean("checkbox_touch_enhancements", true) &&
+                prefs.getBoolean("checkbox_shortcut_bar", true);
+        config.shortcutBarOpacity = Math.max(30, Math.min(100, prefs.getInt("seekbar_shortcut_bar_opacity", 85)));
+        config.shortcutGroups = new java.util.HashSet<>(prefs.getStringSet("list_shortcut_groups",
+                new java.util.HashSet<>(java.util.Arrays.asList("edit", "navigation", "modifiers", "korean", "system", "clipboard"))));
         config.enableLatencyToast = prefs.getBoolean(LATENCY_TOAST_PREF_STRING, DEFAULT_LATENCY_TOAST);
         config.absoluteMouseMode = prefs.getBoolean(ABSOLUTE_MOUSE_MODE_PREF_STRING, DEFAULT_ABSOLUTE_MOUSE_MODE);
         config.enableAudioFx = prefs.getBoolean(ENABLE_AUDIO_FX_PREF_STRING, DEFAULT_ENABLE_AUDIO_FX);

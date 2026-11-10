@@ -1,5 +1,8 @@
 package com.limelight.binding.input.touch;
 
+import com.limelight.binding.input.ShortcutController;
+import com.limelight.binding.input.TouchMouseState;
+
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
@@ -22,6 +25,26 @@ public class RelativeTouchContext implements TouchContext {
     private double xFactor, yFactor;
     private int pointerCount;
     private int maxPointerCountInGesture;
+
+    private ShortcutController shortcuts;
+    private TouchMouseState shortcutMouse;
+
+    @Override
+    public void setShortcutController(ShortcutController controller) {
+        shortcuts = controller;
+        shortcutMouse = new TouchMouseState((button, down, completes) ->
+                controller.mouse("touch" + actionIndex, button, down, completes));
+    }
+
+    private void mouseDown(byte button) {
+        if (shortcutMouse != null) shortcutMouse.down(button);
+        else conn.sendMouseButtonDown(button);
+    }
+
+    private void mouseUp(byte button) {
+        if (shortcutMouse != null) shortcutMouse.up(button, true);
+        else conn.sendMouseButtonUp(button);
+    }
 
     private final NvConnection conn;
     private final int actionIndex;
@@ -46,7 +69,7 @@ public class RelativeTouchContext implements TouchContext {
 
             // We haven't been cancelled before the timer expired so begin dragging
             confirmedDrag = true;
-            conn.sendMouseButtonDown(getMouseButtonIndex());
+            mouseDown(getMouseButtonIndex());
         }
     };
 
@@ -55,31 +78,31 @@ public class RelativeTouchContext implements TouchContext {
             new Runnable() {
                 @Override
                 public void run() {
-                    conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT);
+                    mouseUp(MouseButtonPacket.BUTTON_LEFT);
                 }
             },
             new Runnable() {
                 @Override
                 public void run() {
-                    conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_MIDDLE);
+                    mouseUp(MouseButtonPacket.BUTTON_MIDDLE);
                 }
             },
             new Runnable() {
                 @Override
                 public void run() {
-                    conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_RIGHT);
+                    mouseUp(MouseButtonPacket.BUTTON_RIGHT);
                 }
             },
             new Runnable() {
                 @Override
                 public void run() {
-                    conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_X1);
+                    mouseUp(MouseButtonPacket.BUTTON_X1);
                 }
             },
             new Runnable() {
                 @Override
                 public void run() {
-                    conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_X2);
+                    mouseUp(MouseButtonPacket.BUTTON_X2);
                 }
             }
     };
@@ -184,18 +207,20 @@ public class RelativeTouchContext implements TouchContext {
 
         if (confirmedDrag) {
             // Raise the button after a drag
-            conn.sendMouseButtonUp(buttonIndex);
+            mouseUp(buttonIndex);
         }
         else if (isTap(eventTime))
         {
             // Lower the mouse button
-            conn.sendMouseButtonDown(buttonIndex);
+            mouseDown(buttonIndex);
 
             // Release the mouse button in 100ms to allow for apps that use polling
             // to detect mouse button presses.
             Runnable buttonUpRunnable = buttonUpRunnables[buttonIndex - 1];
             handler.removeCallbacks(buttonUpRunnable);
-            handler.postDelayed(buttonUpRunnable, 100);
+            if (shortcutMouse != null) {
+                handler.postDelayed(shortcutMouse.delayedUp(buttonIndex), 100);
+            } else handler.postDelayed(buttonUpRunnable, 100);
         }
     }
 
@@ -304,14 +329,26 @@ public class RelativeTouchContext implements TouchContext {
 
     @Override
     public void cancelTouch() {
+        cancelForGestureTransfer();
+        if (shortcuts != null) shortcuts.releaseAll();
+    }
+
+    @Override
+    public void cancelForGestureTransfer() {
         cancelled = true;
 
         // Cancel the drag timer
         cancelDragTimer();
 
+        if (shortcutMouse != null) {
+            handler.removeCallbacksAndMessages(null);
+            shortcutMouse.cancel();
+            return;
+        }
+
         // If it was a confirmed drag, we'll need to raise the button now
         if (confirmedDrag) {
-            conn.sendMouseButtonUp(getMouseButtonIndex());
+            mouseUp(getMouseButtonIndex());
         }
     }
 

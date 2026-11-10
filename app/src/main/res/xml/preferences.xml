@@ -129,6 +129,25 @@
     </PreferenceCategory>
     <PreferenceCategory android:title="@string/category_input_settings"
         android:key="category_input_settings">
+        <CheckBoxPreference android:key="checkbox_touch_enhancements" android:defaultValue="true"
+            android:title="@string/shortcut_enhancements" android:summary="@string/shortcut_enhancements_summary" />
+        <CheckBoxPreference android:key="checkbox_touch_work_gestures" android:defaultValue="true"
+            android:dependency="checkbox_touch_enhancements"
+            android:title="@string/touch_work_gestures" android:summary="@string/touch_work_gestures_summary" />
+        <CheckBoxPreference android:key="checkbox_shortcut_bar" android:defaultValue="true"
+            android:dependency="checkbox_touch_enhancements"
+            android:title="@string/shortcut_enable" android:summary="@string/shortcut_enable_summary" />
+        <com.limelight.preferences.SeekBarPreference android:key="seekbar_shortcut_bar_opacity"
+            android:dependency="checkbox_shortcut_bar" android:defaultValue="85" android:max="100" seekbar:min="30"
+            android:title="@string/shortcut_opacity" android:summary="@string/shortcut_opacity_summary"
+            android:dialogMessage="@string/shortcut_opacity_summary" android:text="%" />
+        <MultiSelectListPreference android:key="list_shortcut_groups" android:dependency="checkbox_shortcut_bar"
+            android:title="@string/shortcut_groups" android:summary="@string/shortcut_groups_summary"
+            android:entries="@array/shortcut_group_names" android:entryValues="@array/shortcut_group_values"
+            android:defaultValue="@array/shortcut_group_values" />
+        <Preference android:key="shortcut_help" android:title="@string/shortcut_help_title"
+            android:summary="@string/shortcut_help" />
+
         <CheckBoxPreference
             android:key="checkbox_touchscreen_trackpad"
             android:title="@string/title_checkbox_touchscreen_trackpad"
