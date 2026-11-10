@@ -1,5 +1,15 @@
 # Android F3 + 손가락 업무 제스처 — 로컬 검토 기록
 
+## 승인 후 CI 빌드 결과
+
+David 승인 후 기능 커밋 `ce9032fcfd7632315e798c28275da5741b865a0a`를 `touch`에 게시했다.
+[GitHub Actions 42835762158](https://github.com/Donnowhoo/moonlight-android/actions/runs/42835762158)는 성공했다.
+JUnit 38개(새 입력 테스트 36개+앱 식별 2개), lint, APK 생성, 서명 검증 및 ARM64 확인을 통과했다.
+`Moonlight-Touch-ce9032fc.apk` / 앱 버전 `12.2-touch.ce9032fc`, ID `com.donnowhoo.moonlight.touch.debug`.
+SHA256: `88fe484639a3423f8f503aba3767f26c12aa5b42b0361b7f6ba7e80c3fc98e8a`.
+다운로드 파일은 GitHub digest와 일치하고 ZIP CRC 검사도 통과했다. 설치·실기 시험은 David가 진행한다.
+이 절 아래는 빌드 전 검토 기록이다. 소스의 문서 후속 커밋과 APK 기능 커밋을 구분한다.
+
 2026-11-10. 기반 APK 41db538d는 David가 탭 S9에 설치하여 페어링·직접 터치 정상 확인.
 이번 변경은 아직 APK로 빌드하거나 실행하지 않았다. commit/push/CI/릴리스도 실행하지 않았다.
 
